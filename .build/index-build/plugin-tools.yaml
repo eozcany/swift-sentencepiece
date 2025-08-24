@@ -9,7 +9,7 @@ targets:
   "test": ["<SentencePieceKit-arm64-apple-macosx15.0-debug.module>"]
 default: "main"
 nodes:
-  "/Users/eozcany/repo/hyprime/github/swift-sentencepiece/Sources/":
+  "/Users/eozcany/repo/hyprime/github/swift-sentencepiece/Sources/SentencePieceKit/":
     is-directory-structure: true
     content-exclusion-patterns: [".git",".build"]
   "/Users/eozcany/repo/hyprime/github/swift-sentencepiece/XCFrameworks/SentencePiece.xcframework/":
@@ -43,7 +43,7 @@ commands:
 
   "PackageStructure":
     tool: package-structure-tool
-    inputs: ["/Users/eozcany/repo/hyprime/github/swift-sentencepiece/Sources/","/Users/eozcany/repo/hyprime/github/swift-sentencepiece/XCFrameworks/SentencePiece.xcframework/","/Users/eozcany/repo/hyprime/github/swift-sentencepiece/Package.swift","/Users/eozcany/repo/hyprime/github/swift-sentencepiece/Package.resolved"]
+    inputs: ["/Users/eozcany/repo/hyprime/github/swift-sentencepiece/Sources/SentencePieceKit/","/Users/eozcany/repo/hyprime/github/swift-sentencepiece/XCFrameworks/SentencePiece.xcframework/","/Users/eozcany/repo/hyprime/github/swift-sentencepiece/Package.swift","/Users/eozcany/repo/hyprime/github/swift-sentencepiece/Package.resolved"]
     outputs: ["<PackageStructure>"]
     description: "Planning build"
     allow-missing-inputs: true

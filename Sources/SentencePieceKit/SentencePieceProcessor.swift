@@ -1,5 +1,5 @@
 import Foundation
-import SentencePiece // <- this must match the module name in your XCFramework's module.modulemap
+import SentencePiece // <- from XCFramework's module.modulemap
 
 public enum SPError: Error, LocalizedError {
   case createFailed
@@ -17,20 +17,20 @@ public enum SPError: Error, LocalizedError {
   }
 }
 
-/// Swift wrapper for the C API declared in `spm_c_api.h`.
-/// Exposed by the XCFramework as module `SentencePiece`.
+/// Swift wrapper for the C API in `spm_c_api.h`.
 public final class SentencePieceProcessor {
 
-  /// NOTE: In the XCFramework headers, `spm_processor_t` is a typealias of `UnsafeMutableRawPointer`.
+  /// In your XCFramework, `spm_processor_t` is typically `UnsafeMutableRawPointer`.
   private var handle: spm_processor_t?
 
   // MARK: - Init / Deinit
 
+  /// Create and load from model bytes.
   public init(modelData: Data) throws {
     guard let h = spm_processor_new() else { throw SPError.createFailed }
     self.handle = h
 
-    // `spm_processor_load` expects a path. Write data to a temp file.
+    // `spm_processor_load` expects a path: write bytes to a temp file.
     let tmpURL = FileManager.default.temporaryDirectory
       .appendingPathComponent("spm-\(UUID().uuidString).model")
     try modelData.write(to: tmpURL, options: .atomic)
@@ -39,15 +39,15 @@ public final class SentencePieceProcessor {
       spm_processor_load(h, cPath)
     }
 
-    // Best-effort cleanup
+    // cleanup temp file (keep on failure only if you want extra debug)
     try? FileManager.default.removeItem(at: tmpURL)
 
-    // Convention here: non-zero == success (matches earlier C glue you used)
-    guard status != 0 else {
+    guard status == 0 else {
       throw SPError.loadFailed("spm_processor_load returned \(status)")
     }
   }
 
+  /// Convenience: load directly from a URL.
   public convenience init(modelURL: URL) throws {
     let data = try Data(contentsOf: modelURL)
     try self.init(modelData: data)
@@ -76,22 +76,22 @@ public final class SentencePieceProcessor {
 
   // MARK: - Encode / Decode
 
+  /// Encode text into token IDs.
   public func encode(_ text: String) throws -> [Int] {
     guard let h = handle else { throw SPError.encodeFailed("no handle") }
 
-    // out params: int32_t** ids, size_t* size
+    // out: int32_t** ids, size_t* size
     let idsOut = UnsafeMutablePointer<UnsafeMutablePointer<Int32>?>.allocate(capacity: 1)
     idsOut.initialize(to: nil)
     defer { idsOut.deinitialize(count: 1); idsOut.deallocate() }
 
-    var count: Int = 0 // size_t* → Swift Int*
+    var count: Int = 0
 
     let status: Int32 = text.withCString { cstr in
       spm_encode(h, cstr, idsOut, &count)
     }
-
-    guard status != 0, let idsPtr = idsOut.pointee else {
-      throw SPError.encodeFailed("spm_encode failed, status \(status)")
+    guard status == 0, let idsPtr = idsOut.pointee else {
+      throw SPError.encodeFailed("spm_encode failed (\(status))")
     }
     defer { spm_ids_free(idsPtr) }
 
@@ -99,6 +99,7 @@ public final class SentencePieceProcessor {
     return buf.map { Int($0) }
   }
 
+  /// Decode token IDs back to text.
   public func decode(ids: [Int]) throws -> String {
     guard let h = handle else { throw SPError.decodeFailed("no handle") }
 
@@ -110,12 +111,12 @@ public final class SentencePieceProcessor {
     defer { txtOut.deinitialize(count: 1); txtOut.deallocate() }
 
     let status: Int32 = ids32.withUnsafeBufferPointer { buf in
-      guard let base = buf.baseAddress else { return Int32(0) }
+      guard let base = buf.baseAddress else { return Int32(-1) }
       return spm_decode(h, base, ids32.count, txtOut)
     }
 
-    guard status != 0, let cptr = txtOut.pointee else {
-      throw SPError.decodeFailed("spm_decode failed, status \(status)")
+    guard status == 0, let cptr = txtOut.pointee else {
+      throw SPError.decodeFailed("spm_decode failed (\(status))")
     }
     defer { spm_string_free(cptr) }
 
