@@ -40,18 +40,18 @@ public enum SPError: Error, LocalizedError {
 ///
 /// Required C symbols (provided by your XCFramework):
 /// ```c
-/// spm_processor_t *sentencepiece_processor_new(void);
-/// void sentencepiece_processor_free(spm_processor_t *);
-/// int sentencepiece_processor_load(spm_processor_t *, const char *path);
-/// int sentencepiece_encode(spm_processor_t *, const char *text,
+/// spm_processor_t *spm_processor_new(void);
+/// void spm_processor_free(spm_processor_t *);
+/// int spm_processor_load(spm_processor_t *, const char *path);
+/// int spm_encode(spm_processor_t *, const char *text,
 ///                          int32_t **out_ids, int32_t *out_size);
-/// void sentencepiece_ids_free(int32_t *ids);
-/// int sentencepiece_decode(spm_processor_t *, const int32_t *ids, int32_t size,
+/// void spm_ids_free(int32_t *ids);
+/// int spm_decode(spm_processor_t *, const int32_t *ids, int32_t size,
 ///                          char **out_text, int32_t *out_len);
-/// void sentencepiece_string_free(char *ptr);
-/// int32_t sentencepiece_eos_id(spm_processor_t *);
-/// int32_t sentencepiece_bos_id(spm_processor_t *);
-/// int32_t sentencepiece_vocab_size(spm_processor_t *);
+/// void spm_string_free(char *ptr);
+/// int32_t spm_eos_id(spm_processor_t *);
+/// int32_t spm_bos_id(spm_processor_t *);
+/// int32_t spm_vocab_size(spm_processor_t *);
 /// ```
 public final class SentencePieceProcessor {
     /// Use the exact imported C handle type (seen by Swift as Optional<UnsafeMutableRawPointer>)
@@ -63,7 +63,7 @@ public final class SentencePieceProcessor {
     // MARK: - Lifecycle
 
     public init() throws {
-        guard let p = sentencepiece_processor_new() else {
+        guard let p = spm_processor_new() else {
             throw SPError.createFailed
         }
         self.handle = p
@@ -71,7 +71,7 @@ public final class SentencePieceProcessor {
 
     deinit {
         if let p = handle {
-            sentencepiece_processor_free(p)
+            spm_processor_free(p)
         }
     }
 
@@ -80,7 +80,7 @@ public final class SentencePieceProcessor {
     /// Load a `.model` file from disk.
     public func load(modelURL: URL) throws {
         let rc: Int32 = modelURL.path.withCString { cstr in
-            sentencepiece_processor_load(handle, cstr)
+            spm_processor_load(handle, cstr)
         }
         guard rc == 0 else { throw SPError.loadFailed(code: rc) }
     }
@@ -121,16 +121,16 @@ public final class SentencePieceProcessor {
             var count: Int32 = 0
 
             let rc = text.withCString { cstr in
-                sentencepiece_encode(handle, cstr, &idsPtr, &count)
+                spm_encode(handle, cstr, &idsPtr, &count)
             }
             guard rc == 0, let base = idsPtr, count >= 0 else {
-                if let base = idsPtr { sentencepiece_ids_free(base) }
+                if let base = idsPtr { spm_ids_free(base) }
                 throw SPError.encodeFailed(code: rc)
             }
 
             let buf = UnsafeBufferPointer(start: base, count: Int(count))
             let out = Array(buf)
-            sentencepiece_ids_free(base)
+            spm_ids_free(base)
             return out
         }
     }
@@ -142,24 +142,24 @@ public final class SentencePieceProcessor {
             var len: Int32 = 0
 
             let rc = ids.withUnsafeBufferPointer { buf in
-                sentencepiece_decode(handle, buf.baseAddress, Int32(buf.count), &textPtr, &len)
+                spm_decode(handle, buf.baseAddress, Int32(buf.count), &textPtr, &len)
             }
             guard rc == 0, let p = textPtr else {
-                if let p = textPtr { sentencepiece_string_free(p) }
+                if let p = textPtr { spm_string_free(p) }
                 throw SPError.decodeFailed(code: rc)
             }
 
             let s = String(cString: p)   // API returns NUL‑terminated UTF‑8
-            sentencepiece_string_free(p)
+            spm_string_free(p)
             return s
         }
     }
 
     // MARK: - Introspection
 
-    public var eosId: Int32 { queue.sync { sentencepiece_eos_id(handle) } }
-    public var bosId: Int32 { queue.sync { sentencepiece_bos_id(handle) } }
-    public var vocabSize: Int32 { queue.sync { sentencepiece_vocab_size(handle) } }
+    public var eosId: Int32 { queue.sync { spm_eos_id(handle) } }
+    public var bosId: Int32 { queue.sync { spm_bos_id(handle) } }
+    public var vocabSize: Int32 { queue.sync { spm_vocab_size(handle) } }
 }
 
 // MARK: - Tiny helpers (optional)
