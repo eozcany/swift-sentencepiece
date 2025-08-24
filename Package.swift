@@ -3,19 +3,19 @@ import PackageDescription
 
 let package = Package(
   name: "swift-sentencepiece",
-  platforms: [.iOS(.v15)],
+  platforms: [.iOS(.v16)],
   products: [
     .library(name: "SentencePieceKit", targets: ["SentencePieceKit"])
   ],
   targets: [
     .binaryTarget(
       name: "SentencePiece",
-      path: "Binary/SentencePiece.xcframework"
+      path: "XCFrameworks/SentencePiece.xcframework"
     ),
     .target(
       name: "SentencePieceKit",
       dependencies: ["SentencePiece"],
-      path: "Sources/SentencePieceKit"
+      path: "Sources"
     )
   ]
 )
