@@ -11,197 +11,288 @@ ninja --version            # optional but faster
 git clone https://github.com/google/sentencepiece.git
 git clone https://github.com/leetal/ios-cmake.git   # toolchain for iOS cross-compile
 
+ Add a minimal C API (wrapper)
 
-1) Build static libs (device + simulator)
+Create two files in the repo root (same level as CMakeLists.txt):
 
-These commands produce libsentencepiece.a for iPhone (arm64) and Simulator (arm64 + x86_64).
+spm_c_api.h
 
-cd sentencepiece
+```
+#pragma once
+#include <stddef.h>
+#include <stdint.h>
 
-# Clean old outputs
-rm -rf build-ios && mkdir -p build-ios
+#ifdef __cplusplus
+extern "C" {
+#endif
 
-### A) iPhoneOS (arm64)
-mkdir -p build-ios/iphoneos && cd build-ios/iphoneos
+typedef void* spm_processor_t;
+
+spm_processor_t spm_processor_new(void);
+void spm_processor_free(spm_processor_t p);
+
+int spm_processor_load(spm_processor_t p, const char* model_path);
+
+/* Encode UTF-8 text -> ids. Allocates ids; caller frees with spm_ids_free. */
+int spm_encode(spm_processor_t p, const char* text, int32_t** ids, size_t* size);
+void spm_ids_free(int32_t* ids);
+
+/* Decode ids -> UTF-8 string. Allocates string; caller frees with spm_string_free. */
+int spm_decode(spm_processor_t p, const int32_t* ids, size_t size, char** out);
+void spm_string_free(char* s);
+
+/* Metadata */
+int spm_eos_id(spm_processor_t p);
+int spm_bos_id(spm_processor_t p);
+int spm_vocab_size(spm_processor_t p);
+
+#ifdef __cplusplus
+}
+#endif
+```
+
+spm_c_api.cc
+
+```
+#include "spm_c_api.h"
+#include "src/sentencepiece_processor.h"
+#include <string>
+#include <vector>
+#include <cstring>
+#include <new>
+
+using sentencepiece::SentencePieceProcessor;
+
+extern "C" {
+
+spm_processor_t spm_processor_new(void) {
+  try { return reinterpret_cast<spm_processor_t>(new SentencePieceProcessor()); }
+  catch (...) { return nullptr; }
+}
+
+void spm_processor_free(spm_processor_t p) {
+  delete reinterpret_cast<SentencePieceProcessor*>(p);
+}
+
+int spm_processor_load(spm_processor_t p, const char* model_path) {
+  if (!p || !model_path) return -1;
+  auto* spp = reinterpret_cast<SentencePieceProcessor*>(p);
+  auto status = spp->Load(model_path);
+  return status.ok() ? 0 : -2;
+}
+
+int spm_encode(spm_processor_t p, const char* text, int32_t** ids, size_t* size) {
+  if (!p || !text || !ids || !size) return -1;
+  auto* spp = reinterpret_cast<SentencePieceProcessor*>(p);
+  std::vector<int> vec;
+  auto status = spp->Encode(std::string(text), &vec);
+  if (!status.ok()) return -2;
+  *size = vec.size();
+  *ids = (int32_t*)malloc(sizeof(int32_t) * (*size));
+  if (!*ids) return -3;
+  for (size_t i = 0; i < *size; ++i) (*ids)[i] = static_cast<int32_t>(vec[i]);
+  return 0;
+}
+
+void spm_ids_free(int32_t* ids) { free(ids); }
+
+int spm_decode(spm_processor_t p, const int32_t* ids, size_t size, char** out) {
+  if (!p || !ids || !out) return -1;
+  auto* spp = reinterpret_cast<SentencePieceProcessor*>(p);
+  std::vector<int> vec(ids, ids + size);
+  std::string s;
+  auto status = spp->Decode(vec, &s);
+  if (!status.ok()) return -2;
+  *out = (char*)malloc(s.size() + 1);
+  if (!*out) return -3;
+  std::memcpy(*out, s.data(), s.size());
+  (*out)[s.size()] = '\0';
+  return 0;
+}
+
+int spm_eos_id(spm_processor_t p)       { return p ? reinterpret_cast<SentencePieceProcessor*>(p)->eos_id()   : -1; }
+int spm_bos_id(spm_processor_t p)       { return p ? reinterpret_cast<SentencePieceProcessor*>(p)->bos_id()   : -1; }
+int spm_vocab_size(spm_processor_t p)   { return p ? reinterpret_cast<SentencePieceProcessor*>(p)->GetPieceSize() : -1; }
+
+} // extern "C"
+```
+
+Teach CMake to build the wrapper (static lib)
+
+Append to the bottom of CMakeLists.txt:
+
+```
+# C API mini wrapper
+add_library(spm_c_api STATIC spm_c_api.cc)
+target_include_directories(spm_c_api PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+target_link_libraries(spm_c_api PRIVATE sentencepiece-static)
+set_target_properties(spm_c_api PROPERTIES OUTPUT_NAME "spm_c_api")
+```
+
+Build arm64 slices (device + simulator)
+```
+# DEVICE (arm64)
+rm -rf build-ios && mkdir -p build-ios/iphoneos && cd build-ios/iphoneos
 cmake ../.. -G Ninja \
-  -DCMAKE_TOOLCHAIN_FILE=../../../ios-cmake/ios.toolchain.cmake \
+  -DCMAKE_TOOLCHAIN_FILE=../../ios-cmake/ios.toolchain.cmake \
   -DPLATFORM=OS64 \
-  -DARCHS=arm64 \
   -DCMAKE_BUILD_TYPE=Release \
   -DSPM_USE_BUILTIN_PROTOBUF=ON \
   -DSPM_ENABLE_SHARED=OFF
-ninja
+cmake --build . --config Release
 cd ../..
 
-### B) iOS Simulator (arm64)
-mkdir -p build-ios/simulator && cd build-ios/simulator
+# SIMULATOR (arm64 only)
+mkdir -p build-ios/sim-arm64 && cd build-ios/sim-arm64
 cmake ../.. -G Ninja \
-  -DCMAKE_TOOLCHAIN_FILE=../../../ios-cmake/ios.toolchain.cmake \
-  -DPLATFORM=SIMULATOR64 \
-  -DARCHS=arm64" \
+  -DCMAKE_TOOLCHAIN_FILE=../../ios-cmake/ios.toolchain.cmake \
+  -DPLATFORM=SIMULATORARM64 \
   -DCMAKE_BUILD_TYPE=Release \
   -DSPM_USE_BUILTIN_PROTOBUF=ON \
   -DSPM_ENABLE_SHARED=OFF
-ninja
+cmake --build . --config Release
 cd ../..
+```
+Artifacts:
+	•	build-ios/iphoneos/src/libsentencepiece.a
+	•	build-ios/iphoneos/libspm_c_api.a
+	•	build-ios/sim-arm64/src/libsentencepiece.a
+	•	build-ios/sim-arm64/libspm_c_api.a
 
 
-2) Prepare public headers + module map
+ Merge the two static libraries per slice
 
-SentencePiece ships headers under src/. We’ll collect only what we need and expose a small C shim for Swift.
+We’ll create one archive per slice that contains both the upstream lib and our wrapper.
 
-# From sentencepiece/ (repo root)
-mkdir -p build-ios/headers/sentencepiece
-cp -a src/*.h build-ios/headers/sentencepiece/
+```
+# Device merged
+libtool -static \
+  -o build-ios/iphoneos/libsentencepiece_all.a \
+  build-ios/iphoneos/src/libsentencepiece.a \
+  build-ios/iphoneos/libspm_c_api.a
 
-# Umbrella header
-cat > build-ios/headers/SentencePieceKit.h << 'EOF'
+# Simulator merged
+libtool -static \
+  -o build-ios/sim-arm64/libsentencepiece_all.a \
+  build-ios/sim-arm64/src/libsentencepiece.a \
+  build-ios/sim-arm64/libspm_c_api.a
+```
+
+Headers + module map for Swift
+
+```
+mkdir -p build-ios/headers
+
+# Umbrella header that includes our C API
+cat > build-ios/headers/SentencePiece.h <<'EOF'
 #pragma once
-// Minimal umbrella header – include the public C++ headers.
-#include "sentencepiece/processor.h"
+#include "spm_c_api.h"
 EOF
 
-# module.modulemap (so Swift can `import SentencePieceKit`)
-cat > build-ios/headers/module.modulemap << 'EOF'
-framework module SentencePieceKit {
-  umbrella header "SentencePieceKit.h"
+# Copy our C API header into the headers folder
+cp spm_c_api.h build-ios/headers/
+
+# Module map so Swift can: import SentencePiece
+cat > build-ios/headers/module.modulemap <<'EOF'
+module SentencePiece {
+  umbrella header "SentencePiece.h"
   export *
-  module * { export * }
 }
 EOF
+```
 
-3) Create the XCFramework
-# (Optional) strip symbols
-strip -S -x build-ios/iphoneos/src/libsentencepiece.a || true
-strip -S -x build-ios/simulator/src/libsentencepiece.a || true
 
-# Create the XCFramework
+Create the XCFramework
+
+```
+rm -rf build-ios/SentencePiece.xcframework
 xcodebuild -create-xcframework \
-  -library build-ios/iphoneos/src/libsentencepiece.a -headers build-ios/headers \
-  -library build-ios/simulator/src/libsentencepiece.a -headers build-ios/headers \
+  -library build-ios/iphoneos/libsentencepiece_all.a -headers build-ios/headers \
+  -library build-ios/sim-arm64/libsentencepiece_all.a -headers build-ios/headers \
   -output build-ios/SentencePiece.xcframework
+```
 
-You should now have: sentencepiece/build-ios/SentencePiece.xcframework
-
-4) Create (or update) your Swift Package repo
-
-Repo name: swift-sentencepiece (your choice).
-Structure below keeps everything simple and taggable.
-
-swift-sentencepiece/
-├─ Package.swift
-├─ README.md
-└─ Sources/
-   └─ SentencePieceKit/
-      ├─ SentencePieceProcessor.swift      # Your Swift-friendly wrapper (thin)
-      └─ SentencePiece.xcframework/        # The built framework (copied here)
+You should now see SentencePiece.xcframework with:
+	•	ios-arm64
+	•	ios-arm64_i386_x86_64-simulator (Apple sometimes labels the folder like this even when only arm64 symbols exist—OK).
 
 
-Copy the XCFramework into your package
+Use from your Swift Package / App
+	•	Put the XCFramework under your SPM wrapper repo, e.g. Binary/SentencePiece.xcframework.
+	•	Package.swift:
 
-# from sentencepiece/ root, copy into your SPM repo
-cp -R build-ios/SentencePiece.xcframework \
-  /path/to/swift-sentencepiece/Sources/SentencePieceKit/
+ ```
+// swift-tools-version: 5.9
+import PackageDescription
 
+let package = Package(
+  name: "swift-sentencepiece",
+  platforms: [.iOS(.v15)],
+  products: [
+    .library(name: "SentencePieceKit", targets: ["SentencePieceKit"])
+  ],
+  targets: [
+    .binaryTarget(
+      name: "SentencePiece",
+      path: "Binary/SentencePiece.xcframework"
+    ),
+    .target(
+      name: "SentencePieceKit",
+      dependencies: ["SentencePiece"],
+      path: "Sources/SentencePieceKit"
+    )
+  ]
+)
+```
 
-5) Release a new version (tag)
-cd /path/to/swift-sentencepiece
-git add -A
-git commit -m "Release 0.1.0: add SentencePieceKit XCFramework"
-git tag v0.1.0
-git push origin main --tags
+Your Sources/SentencePieceKit/SentencePieceProcessor.swift should import the module and call the C API names we defined:
 
+```
+import Foundation
+import SentencePiece
 
-6) Integrate in an iOS app
-	1.	Xcode → File → Add Packages…
-	2.	Enter your repo URL (e.g., https://github.com/you/swift-sentencepiece)
-	3.	Choose Up to Next Major (starting from v0.1.0)
-	4.	Add product SentencePieceKit to your app target
-	5.	In code: import SentencePieceKit
-	6.	Ensure your tokenizer.model is in the app Copy Bundle Resources
+public final class SentencePieceProcessor {
+  private var h: OpaquePointer?
 
+  public init() {
+    self.h = OpaquePointer(spm_processor_new())
+  }
+  deinit { spm_processor_free(h) }
 
-7) Update later (new build or features)
-When SentencePiece updates or you need a new slice:
+  public func load(path: URL) throws {
+    guard spm_processor_load(h, path.path) == 0 else { throw SPError.loadFailed(path.path) }
+  }
 
-# Re-run Sections 1–3 to rebuild the XCFramework
-rm -rf Sources/SentencePieceKit/SentencePiece.xcframework
-cp -R /path/to/new/SentencePiece.xcframework Sources/SentencePieceKit/
+  public func encode(_ text: String) throws -> [Int] {
+    var idsPtr: UnsafeMutablePointer<Int32>?
+    var count: Int = 0
+    guard spm_encode(h, text, &idsPtr, &count) == 0, let p = idsPtr else {
+      throw SPError.encodeFailed(text)
+    }
+    defer { spm_ids_free(p) }
+    return (0..<count).map { Int(p[$0]) }
+  }
 
-# If you changed the Swift wrapper or added APIs, edit files in Sources/…
+  public func decode(_ ids: [Int]) throws -> String {
+    var outPtr: UnsafeMutablePointer<CChar>?
+    let rc = ids.withUnsafeBufferPointer { buf in
+      spm_decode(h, buf.baseAddress, buf.count, &outPtr)
+    }
+    guard rc == 0, let c = outPtr else { throw SPError.decodeFailed("") }
+    defer { spm_string_free(c) }
+    return String(cString: c)
+  }
 
-# Bump the version
-git add -A
-git commit -m "Release 0.2.0: update XCFramework / API"
-git tag v0.2.0
-git push origin main --tags
-
-Consumers then update the package to v0.2.0 in Xcode.
-
-8) Troubleshooting
-	•	“invalid headers path” during -create-xcframework
-Ensure build-ios/headers contains both SentencePieceKit.h and module.modulemap.
-	•	“No such module ‘SentencePieceKit’” in app
-Verify the XCFramework is at Sources/SentencePieceKit/SentencePiece.xcframework and the target path in Package.swift matches.
-	•	Undefined symbols for libc++
-Keep .linkedLibrary("c++") in Package.swift.
-	•	Simulator arch mismatch
-Build simulator with -DARCHS="arm64;x86_64".
-	•	App can’t find tokenizer.model
-Check Target Membership and Copy Bundle Resources.
-
-
-
-9) Optional: One‑shot release script
-
-Create scripts/release.sh in the SentencePiece repo to automate 1–3:
-
-#!/usr/bin/env bash
-set -euo pipefail
-
-ROOT="$(pwd)"
-OUT="$ROOT/build-ios"
-TOOLCHAIN="$ROOT/../ios-cmake/ios.toolchain.cmake"
-
-rm -rf "$OUT" && mkdir -p "$OUT"
-
-# iPhoneOS
-cmake -S . -B "$OUT/iphoneos" -G Ninja \
-  -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" -DPLATFORM=OS64 -DARCHS=arm64 \
-  -DCMAKE_BUILD_TYPE=Release -DSPM_USE_BUILTIN_PROTOBUF=ON -DSPM_ENABLE_SHARED=OFF
-cmake --build "$OUT/iphoneos" --config Release
-
-# Simulator
-cmake -S . -B "$OUT/simulator" -G Ninja \
-  -DCMAKE_TOOLCHAIN_FILE="$TOOLCHAIN" -DPLATFORM=SIMULATOR64 -DARCHS="arm64;x86_64" \
-  -DCMAKE_BUILD_TYPE=Release -DSPM_USE_BUILTIN_PROTOBUF=ON -DSPM_ENABLE_SHARED=OFF
-cmake --build "$OUT/simulator" --config Release
-
-# headers & modulemap
-mkdir -p "$OUT/headers/sentencepiece"
-cp -a src/*.h "$OUT/headers/sentencepiece/"
-cat > "$OUT/headers/SentencePieceKit.h" <<'EOF'
-#pragma once
-#include "sentencepiece/processor.h"
-EOF
-cat > "$OUT/headers/module.modulemap" <<'EOF'
-framework module SentencePieceKit {
-  umbrella header "SentencePieceKit.h"
-  export *
-  module * { export * }
+  public var eosId: Int { Int(spm_eos_id(h)) }
+  public var bosId: Int { Int(spm_bos_id(h)) }
+  public var vocabSize: Int { Int(spm_vocab_size(h)) }
 }
-EOF
 
-# XCFramework
-xcodebuild -create-xcframework \
-  -library "$OUT/iphoneos/src/libsentencepiece.a" -headers "$OUT/headers" \
-  -library "$OUT/simulator/src/libsentencepiece.a" -headers "$OUT/headers" \
-  -output "$OUT/SentencePiece.xcframework"
-
-echo "✅ XCFramework at: $OUT/SentencePiece.xcframework"
-
-License Notes
-	•	SentencePiece is Apache‑2.0. Keep its license text in your repo if you redistribute binaries.
-	•	If you add a C shim, license it compatibly and document changes.
-
-    
+public enum SPError: Error {
+  case loadFailed(String), encodeFailed(String), decodeFailed(String)
+}
+```
+8) Commit, tag, and consume
+	•	Commit the XCFramework and sources to your private or public SPM repo.
+	•	Tag a release (e.g., v0.1.0) and point Xcode’s “Add Packages…” to that repo/tag.
+	•	Select the library product (your SentencePieceKit) for the app target.
