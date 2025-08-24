@@ -1,5 +1,5 @@
 import Foundation
-import SentencePiece // the module exported by your XCFramework
+import SentencePiece // module exported by your XCFramework (Headers/module.modulemap)
 
 public enum SPError: Error, LocalizedError {
   case createFailed
@@ -17,25 +17,26 @@ public enum SPError: Error, LocalizedError {
   }
 }
 
-/// Thin Swift wrapper for the C API in `spm_c_api.h`.
+/// Swift wrapper for the C API in `spm_c_api.h`.
 public final class SentencePieceProcessor {
-  private var handle: OpaquePointer?
+
+  /// NOTE: In your XCFramework, `spm_processor_t` is `UnsafeMutableRawPointer`.
+  private var handle: spm_processor_t?
 
   // MARK: - Init / Deinit
 
   public init(modelData: Data) throws {
-    // Create processor
-    var h: OpaquePointer?
-    guard spm_processor_new(&h) else { throw SPError.createFailed }
+    // Create processor (new takes no args and returns a handle)
+    let h: spm_processor_t? = spm_processor_new()
+    guard h != nil else { throw SPError.createFailed }
     self.handle = h
 
-    // Load model from bytes
-    let ok: Bool = modelData.withUnsafeBytes { rawBuf in
-      guard let base = rawBuf.baseAddress else { return false }
-      // Many C APIs take (void*, size_t)
-      return spm_processor_load(self.handle, base, modelData.count)
+    // Load model from bytes (returns int32 status)
+    let status: Int32 = modelData.withUnsafeBytes { rawBuf in
+      guard let base = rawBuf.baseAddress else { return Int32(0) }
+      return spm_processor_load(h, base, modelData.count)
     }
-    if !ok { throw SPError.loadFailed("spm_processor_load returned false") }
+    guard status != 0 else { throw SPError.loadFailed("spm_processor_load returned 0") }
   }
 
   public convenience init(modelURL: URL) throws {
@@ -49,68 +50,66 @@ public final class SentencePieceProcessor {
 
   // MARK: - IDs / vocab
 
-  public var eosId: Int { Int(spm_eos_id(handle)) }
-  public var bosId: Int { Int(spm_bos_id(handle)) }
-  public var vocabSize: Int { Int(spm_vocab_size(handle)) }
+  public var eosId: Int {
+    guard let h = handle else { return -1 }
+    return Int(spm_eos_id(h))
+  }
+
+  public var bosId: Int {
+    guard let h = handle else { return -1 }
+    return Int(spm_bos_id(h))
+  }
+
+  public var vocabSize: Int {
+    guard let h = handle else { return 0 }
+    return Int(spm_vocab_size(h))
+  }
 
   // MARK: - Encode / Decode
 
   public func encode(_ text: String) throws -> [Int] {
     guard let h = handle else { throw SPError.encodeFailed("no handle") }
-    // Prepare C string
-    let ok: Bool = text.withCString { cstr in
-      // Allocate pointer-to-pointer for out param
-      let idsOut = UnsafeMutablePointer<UnsafeMutablePointer<Int32>?>.allocate(capacity: 1)
-      idsOut.initialize(to: nil)
-      defer { idsOut.deinitialize(count: 1); idsOut.deallocate() }
 
-      // size_t* → Swift Int*
-      var count: Int = 0
+    // out params: int32_t** ids, size_t* size
+    let idsOut = UnsafeMutablePointer<UnsafeMutablePointer<Int32>?>.allocate(capacity: 1)
+    idsOut.initialize(to: nil)
+    defer { idsOut.deinitialize(count: 1); idsOut.deallocate() }
 
-      let success = spm_encode(h, cstr, idsOut, &count)
-      guard success else { return false }
+    var count: Int = 0 // size_t* → Swift Int*
 
-      guard let idsPtr = idsOut.pointee else { return false }
-      defer { spm_ids_free(idsPtr) }
-
-      // Copy into Swift Array<Int>
-      let buf = UnsafeBufferPointer(start: idsPtr, count: count)
-      let ints = buf.map { Int($0) }
-
-      // Store into thread-local box for return after leaving withCString
-      Thread.current.threadDictionary["__sp_ids__"] = ints
-      return true
+    let status: Int32 = text.withCString { cstr in
+      spm_encode(h, cstr, idsOut, &count)
     }
-
-    guard ok, let ints = Thread.current.threadDictionary["__sp_ids__"] as? [Int] else {
+    guard status != 0, let idsPtr = idsOut.pointee else {
       throw SPError.encodeFailed("spm_encode failed")
     }
-    Thread.current.threadDictionary.removeObject(forKey: "__sp_ids__")
-    return ints
+    defer { spm_ids_free(idsPtr) }
+
+    let buf = UnsafeBufferPointer(start: idsPtr, count: count)
+    return buf.map { Int($0) }
   }
 
   public func decode(ids: [Int]) throws -> String {
     guard let h = handle else { throw SPError.decodeFailed("no handle") }
-    // Convert to Int32[] for C
+
+    // in params: const int32_t* ids, size_t size
     let ids32 = ids.map { Int32($0) }
 
-    // out char** and size_t*
+    // out params: char** text, size_t* len
     let txtOut = UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>.allocate(capacity: 1)
     txtOut.initialize(to: nil)
     defer { txtOut.deinitialize(count: 1); txtOut.deallocate() }
     var outLen: Int = 0
 
-    let ok = ids32.withUnsafeBufferPointer { buf -> Bool in
-      guard let base = buf.baseAddress else { return false }
+    let status: Int32 = ids32.withUnsafeBufferPointer { buf in
+      guard let base = buf.baseAddress else { return Int32(0) }
       return spm_decode(h, base, ids32.count, txtOut, &outLen)
     }
-    guard ok, let cstr = txtOut.pointee else {
+    guard status != 0, let cptr = txtOut.pointee else {
       throw SPError.decodeFailed("spm_decode failed")
     }
-    defer { spm_string_free(cstr) }
+    defer { spm_string_free(cptr) }
 
-    // Construct Swift String from UTF‑8 C buffer
-    let text = String(cString: cstr)
-    return text
+    return String(cString: cptr) // buffer is UTF‑8 per SentencePiece
   }
 }
