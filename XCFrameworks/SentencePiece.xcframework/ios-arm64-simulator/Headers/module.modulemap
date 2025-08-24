@@ -1,4 +1,5 @@
 module SentencePiece {
-  umbrella header "SentencePiece.h"
+  header "SentencePiece.h"
+  header "spm_c_api.h"
   export *
 }
