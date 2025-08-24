@@ -1,0 +1,5 @@
+module SentencePiece {
+  umbrella header "SentencePiece.h"
+  export *
+  link "c++"
+}
