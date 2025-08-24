@@ -1,5 +1,6 @@
 import Foundation
-import SentencePiece // <- from XCFramework's module.modulemap
+import SentencePiece
+import Darwin
 
 public enum SPError: Error, LocalizedError {
   case createFailed
@@ -118,7 +119,7 @@ public final class SentencePieceProcessor {
     guard status == 0, let cptr = txtOut.pointee else {
       throw SPError.decodeFailed("spm_decode failed (\(status))")
     }
-    defer { spm_string_free(cptr) }
+    defer { free(cptr) }
 
     return String(cString: cptr)
   }
