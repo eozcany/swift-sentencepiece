@@ -26,17 +26,24 @@ public final class SentencePieceProcessor {
   // MARK: - Init / Deinit
 
   public init(modelData: Data) throws {
-    // Create processor (new takes no args and returns a handle)
-    let h: spm_processor_t? = spm_processor_new()
-    guard h != nil else { throw SPError.createFailed }
+    guard let h = spm_processor_new() else { throw SPError.createFailed }
     self.handle = h
-
-    // Load model from bytes (returns int32 status)
-    let status: Int32 = modelData.withUnsafeBytes { rawBuf in
-      guard let base = rawBuf.baseAddress else { return Int32(0) }
-      return spm_processor_load(h, base, modelData.count)
+  
+    // Write the model to a temp file because spm_processor_load expects a path.
+    let tmpURL = FileManager.default.temporaryDirectory
+      .appendingPathComponent("spm-\(UUID().uuidString).model")
+    try modelData.write(to: tmpURL, options: .atomic)
+  
+    let status: Int32 = tmpURL.path.withCString { cPath in
+      spm_processor_load(h, cPath)
     }
-    guard status != 0 else { throw SPError.loadFailed("spm_processor_load returned 0") }
+  
+    // Best‑effort cleanup (keep the file if load fails to aid debugging)
+    try? FileManager.default.removeItem(at: tmpURL)
+  
+    guard status != 0 else {
+      throw SPError.loadFailed("spm_processor_load returned \(status)")
+    }
   }
 
   public convenience init(modelURL: URL) throws {
@@ -91,25 +98,24 @@ public final class SentencePieceProcessor {
 
   public func decode(ids: [Int]) throws -> String {
     guard let h = handle else { throw SPError.decodeFailed("no handle") }
-
-    // in params: const int32_t* ids, size_t size
+  
     let ids32 = ids.map { Int32($0) }
-
-    // out params: char** text, size_t* len
+  
+    // out: char** text
     let txtOut = UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>.allocate(capacity: 1)
     txtOut.initialize(to: nil)
     defer { txtOut.deinitialize(count: 1); txtOut.deallocate() }
-    var outLen: Int = 0
-
+  
     let status: Int32 = ids32.withUnsafeBufferPointer { buf in
       guard let base = buf.baseAddress else { return Int32(0) }
-      return spm_decode(h, base, ids32.count, txtOut, &outLen)
+      return spm_decode(h, base, ids32.count, txtOut)
     }
+  
     guard status != 0, let cptr = txtOut.pointee else {
-      throw SPError.decodeFailed("spm_decode failed")
+      throw SPError.decodeFailed("spm_decode failed with \(status)")
     }
     defer { spm_string_free(cptr) }
-
-    return String(cString: cptr) // buffer is UTF‑8 per SentencePiece
+  
+    return String(cString: cptr)
   }
 }
