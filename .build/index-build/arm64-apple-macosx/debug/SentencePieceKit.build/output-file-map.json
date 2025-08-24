@@ -1,0 +1,11 @@
+{
+  "": {
+    "swift-dependencies": "/Users/eozcany/repo/hyprime/github/swift-sentencepiece/.build/index-build/arm64-apple-macosx/debug/SentencePieceKit.build/master.swiftdeps"
+  },
+  "/Users/eozcany/repo/hyprime/github/swift-sentencepiece/Sources/SentencePieceKit/SentencePieceProcessor.swift": {
+    "dependencies": "/Users/eozcany/repo/hyprime/github/swift-sentencepiece/.build/index-build/arm64-apple-macosx/debug/SentencePieceKit.build/SentencePieceProcessor.d",
+    "object": "/Users/eozcany/repo/hyprime/github/swift-sentencepiece/.build/index-build/arm64-apple-macosx/debug/SentencePieceKit.build/SentencePieceProcessor.swift.o",
+    "swiftmodule": "/Users/eozcany/repo/hyprime/github/swift-sentencepiece/.build/index-build/arm64-apple-macosx/debug/SentencePieceKit.build/SentencePieceProcessor~partial.swiftmodule",
+    "swift-dependencies": "/Users/eozcany/repo/hyprime/github/swift-sentencepiece/.build/index-build/arm64-apple-macosx/debug/SentencePieceKit.build/SentencePieceProcessor.swiftdeps"
+  }
+}
