@@ -1,4 +1,0 @@
-module SentencePieceKit {
-    header "/Users/eozcany/repo/hyprime/github/swift-sentencepiece/.build/index-build/arm64-apple-macosx/debug/SentencePieceKit.build/SentencePieceKit-Swift.h"
-    requires objc
-}

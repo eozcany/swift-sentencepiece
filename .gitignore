@@ -1,0 +1,5 @@
+.derived
+.swiftpm/xcode/*
+.DS_Store
+xcuserdata/
+xcshareddata/
